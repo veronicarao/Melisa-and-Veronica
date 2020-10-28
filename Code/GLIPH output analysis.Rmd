@@ -1,0 +1,282 @@
+---
+title: "GLIPH Output Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+```{r, message=FALSE}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(plotly)
+library(RColorBrewer)
+library(tidyr)
+```
+
+Load the data
+```{r}
+#Load all data
+all <- read.table("all.tsv", header = TRUE, sep = '\t')
+
+#Load the group convergence file
+d7_group <- read.delim("d7_act_convergence_groups.txt", header = FALSE, sep = '\t')
+
+#Load the motif file
+d7_motifs <- read.delim("d7_act.txt", header = TRUE, sep = '\t')
+```
+
+```{r}
+#Add time column to all data frame
+all$time <- paste(all$day, all$status, all$year)
+
+#Re-ordering the level
+all$time <- factor(all$time, levels=c("day0 resting 2016", "day0 active 2016", "day7 resting 2016", "day7 active 2016", "day0 resting 2017", "day0 active 2017", "day7 resting 2017", "day7 active 2017"))
+
+#Get the motif name 
+motif <- d7_motifs[1]
+```
+
+# GLIPH GROUPING
+```{r}
+#Filter the data 
+grp <- d7_group %>%
+  filter(V1 > 10) 
+
+#Reorder the data in descending order
+grp <- grp[order(-grp$V1),]
+```
+
+Get the top 5 groups with highest count  
+```{r}
+#Get the first 5 rows
+grp <- grp[1:5,]
+
+#Separate the aminoAcid
+grp <- separate_rows(grp, V3, sep = " ", convert = FALSE)
+grp <- as.data.frame(grp)[,-1]
+grp$V2 <- as.factor(grp$V2)
+```
+
+Get details of the aminoAcids 
+```{r}
+grp_all <- data.frame()
+
+#Find the aminoAcids that belong the groups
+for(i in 1:nrow(grp))
+{
+  temp <- all[str_detect(all$aminoAcid, grp[i,2]),]
+  temp$group <- grp[i,1]
+  
+  grp_all <- rbind(grp_all, temp)
+}
+
+grp_all$group <- as.factor(grp_all$group)
+```
+
+Contribution of individuals to the group
+```{r}
+#Subset d7 active data
+dat <- subset(grp_all, time == "day7 active 2016" | time == "day7 active 2017")
+
+#Count the subject based on group 
+df <- dat %>% 
+  count(patient, group, sort = TRUE)
+df
+```
+
+```{r, fig.height=3, fig.width=5}
+#Control the color of the subject
+colorCount <- length(unique(df$patient))
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+p <- ggplot(df, aes(x = group, y = n, fill = patient)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = getPalette(colorCount))
+p
+
+#To make the plot interactive 
+#ggplotly(p, width = 900)
+```
+
+Get aminoAcid with count greater than or equal to 9 in either day7 active 2016 or 2017
+```{r}
+#Sort the df by count 
+grp_all <- grp_all[order(-grp_all$count),]
+
+#Get amino acid where the count is greater or equal to 9 in day7 active 
+aa <- subset(grp_all, time == "day7 active 2016" & count >=9 | time == "day7 active 2017" & count >=9, aminoAcid)
+test <- grp_all[str_detect(grp_all$aminoAcid, paste(aa$aminoAcid, collapse = "|")),]
+```
+
+Changes in aminoAcid count across different time point 
+```{r, message = FALSE}
+df <- test %>%
+  group_by(aminoAcid, time) %>%
+  summarise(total = sum(count))
+
+df
+```
+
+Visualise the data
+```{r, fig.width= 5}
+p <- ggplot(df, aes(x = time, y = aminoAcid, fill = total, label = total)) + 
+  geom_tile() + 
+  scale_fill_gradient(low = "dodgerblue4", high = "red3")
+
+p + geom_text()
+
+#To make the plot interactive 
+#ggplotly(p, width = 1000)
+```
+
+Distribution of aminoAcid across subjects and time points
+```{r}
+#Group the data by aminoAcid, time, amd patient 
+df <- test %>%
+  group_by(aminoAcid, time, patient) %>%
+  summarise(total = sum(count))
+
+df
+```
+
+Visualise the data
+```{r}
+#Controls the color of the aminoAcid
+colorCount <- length(unique(df$aminoAcid))
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+p <- ggplot(df, aes(x = patient, y = total, fill = aminoAcid)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = getPalette(colorCount)) +
+  facet_wrap(~time, ncol = 2)
+
+p
+
+#To make the plot interactive 
+#ggplotly(p)
+```
+
+Show that one aminoAcid can have more than one vGeneName 
+```{r, message = FALSE}
+df <- test %>%
+  group_by(aminoAcid, vGeneName, time) %>%
+  summarise(total = sum(count))
+df
+```
+
+Visualise the data
+```{r}
+colorCount <- length(unique(df$vGeneName))
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+p <- ggplot(df, aes(x = aminoAcid, y = total, fill = vGeneName)) +
+  geom_bar(position = "stack", stat = "identity") +
+  scale_fill_manual(values = getPalette(colorCount)) +
+  facet_wrap(~time, ncol = 2) +
+  coord_flip()
+
+p 
+
+#To make the plot interactive 
+#ggplotly(p)
+```
+
+# GlIPH motif analysis
+```{r}
+#Subset data for day7 active 2016 and day7 active 2017
+d7_act <- subset(all, time == "day7 active 2016" | time == "day7 active 2017")
+d7_act_df <- data.frame()
+
+#get the aminoAcids that belong to each individual motif
+for(i in 1:nrow(motif))
+{
+  temp <- d7_act[str_detect(d7_act$aminoAcid, motif[i,]),]
+  temp$motif <- motif[i,]
+  
+  d7_act_df <- rbind(d7_act_df, temp)
+}
+```
+
+Get the top5 motifs with the highest count 
+```{r, message = FALSE}
+#Group the data based on motif and time and get the total count
+df <- d7_act_df %>%
+  group_by(motif, time) %>%
+  summarise(total = sum(count))
+
+#re-order the data in descending order by total
+df <- df[order(-df$total),]
+
+#Get the top 5 motifs
+top5.motif <- head(unique(df$motif), 5)
+
+#Subset the data based on the top5 motif
+top5.df <- df[str_detect(df$motif, paste(top5.motif, collapse = "|")),]
+top5.df
+```
+
+Visualise the top5 motif 
+```{r, fig.width = 4, fig.height = 2}
+p <- ggplot(top5.df, aes(x = motif, y = time, fill = total, label = total)) + 
+  geom_tile() + 
+  scale_fill_gradient(low = "dodgerblue4", high = "red3") 
+
+p + geom_text()
+
+##To make the plot interactive 
+ggplotly(p)
+```
+
+Function to display distribution of aminoAcid for a certain motif across subjects
+```{r}
+generate_barplot_CDR3 <- function(df, x){
+  #Get the aminoAcids that belong to a certain motif 
+  df.subset <- subset(df, motif == x)
+  
+  #Control the color of the aminoAcid
+  colorCount <- length(unique(df.subset$aminoAcid))
+  getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+  p <- ggplot(df.subset, aes(x = patient, y = count, fill = aminoAcid)) +
+  geom_bar(position = "stack", stat = "identity") +
+  scale_fill_manual(values = getPalette(colorCount)) +
+  ggtitle(paste("CDR3s with", x, "motif")) +
+  facet_wrap(~time, ncol = 2)
+}
+```
+
+Visualise aminoAcid for KTYG
+```{r}
+p <- generate_barplot_CDR3(d7_act_df, "KTYG")
+p
+
+##to make the plot interactive 
+#ggplotly(p)
+```
+
+Visualise aminoAcid for QSRA
+```{r}
+p <- generate_barplot_CDR3(d7_act_df, "QSRA")
+p
+
+##to make the plot interactive 
+#ggplotly(p)
+```
+
+Visualise aminoAcid for RANV
+```{r}
+p <- generate_barplot_CDR3(d7_act_df, "RANV")
+p
+
+##to make the plot interactive 
+#ggplotly(p)
+```
+Visualise aminoAcid for SRAN
+```{r}
+p <- generate_barplot_CDR3(d7_act_df, "SRAN")
+p
+
+##to make the plot interactive 
+#ggplotly(p)
+```
+
