@@ -1,0 +1,83 @@
+---
+title: "Data cleaning for GLIPH"
+output: html_notebook
+---
+
+```{r}
+PATH <- "/Volumes/FLASHDISK/Data Science Capstone Project/Data_copy"
+
+# List of the file names 
+files_list <- list.files(path = PATH, pattern = "*.tsv")
+
+# Read all files 
+all_files <- lapply(files_list, function(x){
+  read.table(file = x,
+             sep = '\t',
+             header = TRUE, 
+             na.strings = c('', 'NA'))
+})
+
+# Reference the files by name
+names(all_files) <- files_list
+```
+
+Function to clean the data
+```{r}
+library(stringr)
+
+data_cleaning <- function(df, filename){
+  # Remove NAs in aminoAcid column 
+  df <- df[!is.na(df$aminoAcid),]
+  
+  # Remove rows with certain patterns 
+  PATTERNS <- c('\\*', 'CASSFWGQGTDTQYF', 'CASSESSGRAILTDTQYF', 'CASSQAPPGQGVDIQYF', 
+          'CASSTYRAALENEQFF', 'CASSQDRIHTEAFF', 'CASSHGSDEQYF', 'CASIHQGSTEAFF', 
+          'CASSPGQGNYGYTF', 'CASSLDRNTEAFF', 'CASSLGTDTQYF')
+  df <- df[str_detect(df$aminoAcid, str_c(PATTERNS, collapse = '|'), negate = TRUE),]
+  
+  # Remap the NAs in vGeneName column with vFamilyName value 
+  df$vGeneName <- ifelse(is.na(df$vGeneName), df$vFamilyName, df$vGeneName)
+  # Remap the NAs in jGeneName column with jFamilyName value
+  df$jGeneName <- ifelse(is.na(df$jGeneName), df$jFamilyName, df$jGeneName)  
+  
+  #Subset specified columns
+  df <- df[c(2,8,22,3)]
+  names(df)[4] <- "count"
+  
+  # Remove duplicated rows and combine the count 
+  df$vGeneName <- addNA(df$vGeneName)
+  df$jGeneName <- addNA(df$jGeneName)
+  df <- aggregate(count ~ aminoAcid + vGeneName +jGeneName, data = df, 
+                  FUN = "sum", na.rm = FALSE, na.action = na.pass)
+  df$vGeneName <- as.character(df$vGeneName)
+  df$jGeneName <- as.character(df$jGeneName)
+  
+  #Add columns
+  df$patient <- substr(filename, 1, 6)
+  df$year <- substr(filename, 8, 11)
+  df$day <- ifelse(substr(filename, 13, 14) == 'd0', 'day0', 'day7')
+  df$status <- ifelse(substr(filename, 16, 18) == 'act', 'active', 'resting')
+  
+  #Re-order columns in the df
+  df <- df[c(1,2,3,5,4,6,7,8)]
+  return(df)
+}
+```
+
+Cleaned all data
+```{r}
+for (i in 1:length(all_files)){
+  all_files[[i]] <- data_cleaning(all_files[[i]], files_list[[i]])
+}
+```
+
+Combines data for day7 active for 2016 and 2017
+```{r}
+#Combining all files for day7 active regardless of year
+d7_active <- rbind(all_files[[3]], all_files[[11]], all_files[[19]], all_files[[27]], all_files[[35]], all_files[[43]], all_files[[7]], all_files[[15]], all_files[[23]], all_files[[31]], all_files[[39]], all_files[[47]])
+#d7_active <- d7_active[, 1:5]
+
+#Export dataframe as txt file
+write.table(d7_active, file = "d7_active_all.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
